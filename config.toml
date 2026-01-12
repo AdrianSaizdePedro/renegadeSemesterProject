@@ -1,0 +1,15 @@
+# Config for Renegade Crawler
+bootstrap-mode = true
+disable-price-reporter = true
+p2p-port = 8000
+db-path = "./crawler_db"
+
+# Bootstrap Nodes
+bootstrap-servers = [
+    "/ip4/18.220.142.135/udp/8000/quic-v1/p2p/12D3KooWM8cGSgYWjwBXAtDCXmpuKvhuVZXmfErf6WhQVyRcug6i",
+    "/ip4/18.220.244.185/udp/8000/quic-v1/p2p/12D3KooWN8y35HsnJ5R7D4XJjHUxy8HWhqJdUbgy3253CJmuLhSb",
+    "/ip4/3.144.3.61/udp/8000/quic-v1/p2p/12D3KooWADBJYHGpNqK7ubp9qAEm4vLgVNH8vs7j64t6ums48eD8"
+]
+
+# RPC Config
+rpc-url = "https://mainnet.base.org"

@@ -3,6 +3,8 @@
 //!
 //! This file groups logic for creating the server as well as the central
 //! dispatch/execution loop of the workers
+use std::{collections::HashSet, sync::Arc};
+use tokio::sync::Mutex;
 
 use common::{
     default_wrapper::DefaultWrapper,
@@ -74,6 +76,9 @@ impl GossipServer {
         // network manager time to index the peers in the case that these
         // messages are processed concurrently
 
+        // 0. Dump Peers from DB
+        self.dump_peers_from_db().await?;
+
         // 1. Forward bootstrap addresses to the network manager
         for (peer_id, address) in self.config.bootstrap_servers.iter().cloned() {
             let cmd = NetworkManagerControlSignal::NewAddr { peer_id, address };
@@ -102,6 +107,24 @@ impl GossipServer {
 
         Ok(())
     }
+
+    // Dentro de GossipServer o el Executor
+    pub async fn dump_peers_from_db(&self) -> Result<(), GossipError> {
+        // 1. El método correcto es get_peer_info_map (asíncrono)
+        let peers = self.state().get_peer_info_map().await
+            .map_err(|e| GossipError::ServerSetup(e.to_string()))?; // Usamos ServerSetup si Storage no existe
+        
+        // 2. En Rust, no se puede usar '+' para concatenar strings con repeticiones así
+        let separator = "=".repeat(40); 
+        
+        println!("\n{}", separator);
+        println!("DUMP DE PEERS EN DB (Total: {})", peers.len());
+        for (id, info) in peers.iter() {
+            println!("ID: {} | Addr: {} | Cluster: {}", id, info.get_addr(), info.cluster_id);
+        }
+        println!("{}\n", separator);
+        Ok(())
+    }
 }
 
 // ---------------------
@@ -125,6 +148,8 @@ pub struct GossipProtocolExecutor {
     pub config: GossipServerConfig,
     /// The channel that the coordinator thread uses to cancel gossip execution
     pub cancel_channel: CancelChannel,
+
+    pub visited_peers: Arc<Mutex<HashSet<WrappedPeerId>>>,
 }
 
 impl GossipProtocolExecutor {
@@ -147,6 +172,7 @@ impl GossipProtocolExecutor {
             state,
             config,
             cancel_channel,
+            visited_peers: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
@@ -259,11 +285,44 @@ impl GossipProtocolExecutor {
         }
 
         match resp.body {
-            GossipResponseType::Heartbeat(resp) => self.handle_heartbeat(&peer, &resp).await,
+            GossipResponseType::Heartbeat(resp) => {
+                let mut visited = self.visited_peers.lock().await;
+                let my_id = self.state.get_peer_id().map_err(err_str!(GossipError::State))?;
+                let my_info = self.state.get_peer_info(&my_id).await?.unwrap();
+
+                for peer_id in resp.known_peers.iter() {
+                    // Comprobamos si el PEER DESCUBIERTO es nuevo para nosotros, 
+                    // independientemente de quién nos lo diga.
+                    if !visited.contains(peer_id) && *peer_id != my_id {
+                        visited.insert(*peer_id);
+
+                        if let Ok(mut file) = std::fs::OpenOptions::new()
+                            .create(true).append(true).open("network_graph.jsonl") 
+                        {
+                            let entry = serde_json::json!({
+                                "source_node": peer.to_string(),
+                                "discovered_peer": peer_id.to_string(),
+                                "timestamp": util::get_current_time_millis(),
+                            });
+                            let _ = std::io::Write::write_all(&mut file, format!("{}\n", entry).as_bytes());
+                        }
+
+                        // Lanzamos la sonda al nuevo nodo
+                        let req = GossipRequestType::Bootstrap(BootstrapRequest { peer_info: my_info.clone() });
+                        let job = NetworkManagerJob::request(*peer_id, req);
+                        self.network_channel.send(job).map_err(err_str!(GossipError::SendMessage))?;
+                        
+                        tracing::info!("Crawler: Saltando a {} (descubierto vía {})", peer_id, peer);
+                    }
+                }
+                self.handle_heartbeat(&peer, &resp).await
+            },
             GossipResponseType::OrderInfo(resp) => {
                 self.handle_order_info_response(resp.order_info).await
             },
-            GossipResponseType::PeerInfo(resp) => self.handle_peer_info_resp(resp.peer_info).await,
+            GossipResponseType::PeerInfo(resp) => {
+                self.handle_peer_info_resp(resp.peer_info).await
+            },
             resp => Err(GossipError::UnhandledRequest(format!("{resp:?}"))),
         }
     }

@@ -25,6 +25,7 @@ util = { workspace = true }
 renegade-metrics = { workspace = true }
 
 # === Misc Dependencies === #
+serde_json = { workspace = true }
 itertools = { workspace = true }
 lru = "0.11"
 tracing = "0.1"
