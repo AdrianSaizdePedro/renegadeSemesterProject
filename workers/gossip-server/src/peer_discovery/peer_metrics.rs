@@ -25,4 +25,19 @@ pub async fn record_num_peers_metrics(state: &State) {
 
     metrics::gauge!(NUM_LOCAL_PEERS_METRIC).set(num_local_peers as f64);
     metrics::gauge!(NUM_REMOTE_PEERS_METRIC).set(num_remote_peers as f64);
+
+    // 2. Escritura en archivo local para tu topología
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("peer_metrics.jsonl") 
+    {
+        let entry = serde_json::json!({
+            "timestamp": util::get_current_time_millis(),
+            "local_peers": num_local_peers,
+            "remote_peers": num_remote_peers,
+            "total": num_local_peers + num_remote_peers,
+        });
+        let _ = std::io::Write::write_all(&mut file, format!("{}\n", entry).as_bytes());
+    }
 }

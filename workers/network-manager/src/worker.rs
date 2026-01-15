@@ -212,7 +212,9 @@ impl Worker for NetworkManager {
         let addr: Multiaddr = hostport.parse().unwrap();
 
         // Build the quic transport
-        let config = QuicConfig::new(&self.local_keypair);
+        let mut config = QuicConfig::new(&self.local_keypair);
+        config.handshake_timeout = std::time::Duration::from_secs(30);
+        config.keep_alive_interval = std::time::Duration::from_secs(10);
         let quic_transport = QuicTransport::new(config)
             .map(|(peer_id, quic_conn), _| (peer_id, StreamMuxerBox::new(quic_conn)))
             .boxed();

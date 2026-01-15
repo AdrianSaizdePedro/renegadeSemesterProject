@@ -149,7 +149,10 @@ pub struct GossipProtocolExecutor {
     /// The channel that the coordinator thread uses to cancel gossip execution
     pub cancel_channel: CancelChannel,
 
-    pub visited_peers: Arc<Mutex<HashSet<WrappedPeerId>>>,
+    pub saved_peers: Arc<Mutex<HashSet<WrappedPeerId>>>,
+
+    pub contacted_peers: Arc<Mutex<HashSet<WrappedPeerId>>>,
+
 }
 
 impl GossipProtocolExecutor {
@@ -172,7 +175,8 @@ impl GossipProtocolExecutor {
             state,
             config,
             cancel_channel,
-            visited_peers: Arc::new(Mutex::new(HashSet::new())),
+            saved_peers: Arc::new(Mutex::new(HashSet::new())),
+            contacted_peers: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
@@ -286,7 +290,7 @@ impl GossipProtocolExecutor {
 
         match resp.body {
             GossipResponseType::Heartbeat(resp) => {
-                let mut visited = self.visited_peers.lock().await;
+                let mut visited = self.contacted_peers.lock().await;
                 let my_id = self.state.get_peer_id().map_err(err_str!(GossipError::State))?;
                 let my_info = self.state.get_peer_info(&my_id).await?.unwrap();
 
@@ -321,6 +325,33 @@ impl GossipProtocolExecutor {
                 self.handle_order_info_response(resp.order_info).await
             },
             GossipResponseType::PeerInfo(resp) => {
+                // 1. Bloqueamos el Mutex de los nodos guardados
+                let mut saved = self.saved_peers.lock().await;
+                let my_id = self.state.get_peer_id().map_err(err_str!(GossipError::State))?;
+
+                for info in resp.peer_info.iter() {
+                    // 2. Solo registramos si es un peer nuevo y no somos nosotros
+                    if !saved.contains(&info.peer_id) && info.peer_id != my_id {
+                        saved.insert(info.peer_id);
+
+                        // 3. Registro detallado en JSONL
+                        if let Ok(mut file) = std::fs::OpenOptions::new()
+                            .create(true).append(true).open("network_graph.jsonl") 
+                        {
+                            let entry = serde_json::json!({
+                                "source_node": peer.to_string(),
+                                "discovered_peer": info.peer_id.to_string(),
+                                "cluster_id": info.cluster_id.to_string(),
+                                "addr": info.get_addr().to_string(),
+                                "timestamp": util::get_current_time_millis(),
+                            });
+                            let _ = std::io::Write::write_all(&mut file, format!("{}\n", entry).as_bytes());
+                        }
+                        
+                        tracing::info!("Crawler: Node {} saved in local BD", info.peer_id);
+                    }
+                }
+
                 self.handle_peer_info_resp(resp.peer_info).await
             },
             resp => Err(GossipError::UnhandledRequest(format!("{resp:?}"))),

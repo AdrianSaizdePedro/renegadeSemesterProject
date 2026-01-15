@@ -213,6 +213,22 @@ impl NetworkManagerExecutor {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!("Listening on {}/p2p/{}\n", address, self.local_peer_id);
                         },
+
+                        // --- AÑADE ESTO PARA EL CRAWLER ---
+                        SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+                            let id = peer_id.map(|p| p.to_string()).unwrap_or_else(|| "Unknown".to_string());
+                            error!("Crawler Dial Error: No se pudo conectar con el nodo {}", id);
+                            error!("Razón técnica: {:?}", error);
+                        },
+                        
+                        SwarmEvent::IncomingConnectionError { local_addr, send_back_addr, error, .. } => {
+                            error!("Error en conexión entrante de {}: {:?}", send_back_addr, error);
+                        },
+
+                        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                            info!("Crawler: Conexión establecida con éxito con {}", peer_id);
+                        },
+                        // ----------------------------------
                         // This catchall may be enabled for fine-grained libp2p introspection
                         x => { debug!("Unhandled swarm event: {:?}", x) }
                     }
